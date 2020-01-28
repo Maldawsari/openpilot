@@ -22,6 +22,7 @@ class CarInterface(CarInterfaceBase):
 
     self.frame = 0
     self.acc_active_prev = 0
+    self.gas_pressed_prev = False
 
     # *** init the major players ***
     canbus = CanBus()
@@ -70,7 +71,7 @@ class CarInterface(CarInterfaceBase):
       ret.lateralTuning.pid.kf = 0.00006
 
 
-    ret.steerLimitTimer = 0.4
+    ret.steerLimitTimer = 0.8
     ret.steerActuatorDelay = 0.1
     ret.steerRateCost = 1.0
     ret.steerRatioRear = 0.
@@ -179,6 +180,8 @@ class CarInterface(CarInterfaceBase):
     ret.doorOpen = self.CS.door_open
     ret.seatbeltUnlatched = self.CS.seatbelt_unlatched
 
+    ret.gasPressed = self.CS.user_gas_pressed
+
 
     events = []
     if self.CS.acc_active and not self.acc_active_prev:
@@ -194,6 +197,10 @@ class CarInterface(CarInterfaceBase):
     if self.CS.low_speed_lockout:
       events.append(create_event('speedTooLow', [ET.NO_ENTRY]))
 
+    # disable on gas pedal rising edge
+    if (ret.gasPressed and not self.gas_pressed_prev):
+      events.append(create_event('pedalPressed', [ET.NO_ENTRY, ET.USER_DISABLE]))
+
     # handle button presses
     for b in ret.buttonEvents:
       # do enable on both accel and decel buttons
@@ -205,6 +212,7 @@ class CarInterface(CarInterfaceBase):
 
     ret.events = events
 
+    self.gas_pressed_prev = ret.gasPressed
     self.acc_active_prev = self.CS.acc_active
 
 

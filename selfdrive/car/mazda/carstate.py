@@ -30,7 +30,7 @@ def get_powertrain_can_parser(CP, canbus):
     ("FR", "DOORS", 0),
     ("BL", "DOORS", 0),
     ("BR", "DOORS", 0),
-    ("GAS_PEDAL_PRESSED", "CRZ_EVENTS", 0),
+    ("PEDAL_GAS", "ENGINE_DATA", 0),
   ]
 
   checks = [
@@ -40,8 +40,9 @@ def get_powertrain_can_parser(CP, canbus):
     ("STEER_RATE", 83),
     ("STEER_TORQUE", 83),
     ("WHEEL_SPEEDS", 100),
+    ("ENGINE_DATA", 100),
     ("CRZ_CTRL", 50),
-    ("CRZ_EVENTS", 50),
+#    ("CRZ_EVENTS", 50),
     ("PEDALS", 50),
     ("SEATBELT", 10),
     ("DOORS", 10),
@@ -136,7 +137,7 @@ class CarState():
     self.steer_torque_driver = pt_cp.vl["STEER_TORQUE"]['STEER_TORQUE_SENSOR']
     self.steer_torque_motor = pt_cp.vl["STEER_TORQUE"]['STEER_TORQUE_MOTOR']
 
-    # Mazde doesn't steer if hands are off the steering wheele over 5 seconds
+    # Mazde doesn't steer if hands are off the steering wheel over 5 seconds
     # One way to deal with this is to use a weight on the steering wheel, which
     # generates about 10 units of torque. this "artificial" torque should be
     # ignored by OP. The value could be lower but 15 seems to be a good compromise.
@@ -157,6 +158,8 @@ class CarState():
 
     self.seatbelt_unlatched =  pt_cp.vl["SEATBELT"]['DRIVER_SEATBELT'] == 0
 
+    self.user_gas_pressed = True if pt_cp.vl["ENGINE_DATA"]['PEDAL_GAS'] > 0.0001 else False
+
     self.steer_error = False
     self.brake_error = False
 
@@ -168,7 +171,7 @@ class CarState():
     self.steer_lkas.handsoff = pt_cp.vl["STEER_RATE"]['HANDS_OFF_5_SECONDS']
 
     #self.steer_not_allowed = self.steer_lkas.block == 1
-    # no steer below 45kph
-    self.low_speed_lockout = (v_wheel // CV.KPH_TO_MS) < 45
+    # no steer below 50kph
+    self.low_speed_lockout = ((v_wheel // CV.KPH_TO_MS)) < 50 and (self.steer_lkas.block == 1)
 
     self.cam_lkas = cam_cp.vl["CAM_LKAS"]
