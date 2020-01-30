@@ -31,6 +31,9 @@ def get_powertrain_can_parser(CP, canbus):
     ("BL", "DOORS", 0),
     ("BR", "DOORS", 0),
     ("PEDAL_GAS", "ENGINE_DATA", 0),
+    ("RES", "CRZ_BTNS", 0),
+    ("SET_P", "CRZ_BTNS", 0),
+    ("SET_M", "CRZ_BTNS", 0),
   ]
 
   checks = [
@@ -42,7 +45,7 @@ def get_powertrain_can_parser(CP, canbus):
     ("WHEEL_SPEEDS", 100),
     ("ENGINE_DATA", 100),
     ("CRZ_CTRL", 50),
-#    ("CRZ_EVENTS", 50),
+    ("CRZ_BTNS", 10),
     ("PEDALS", 50),
     ("SEATBELT", 10),
     ("DOORS", 10),
@@ -95,6 +98,9 @@ class CarState():
     self.steer_not_allowed = False
     self.main_on = False
     self.acc_active_last = False
+    self.speed_kph = 0
+    self.lkas_speed_lock = False
+    self.low_speed_lockout = True
 
     # vEgo kalman filter
     dt = 0.01
@@ -115,6 +121,7 @@ class CarState():
     v_wheel = (self.v_wheel_fl + self.v_wheel_fr + self.v_wheel_rl + self.v_wheel_rr) / 4.
 
     self.v_ego_raw = v_wheel
+    self.speed_kph = v_wheel // CV.KPH_TO_MS
 
     v_ego_x = self.v_ego_kf.update(v_wheel)
     self.v_ego = float(v_ego_x[0])
@@ -127,11 +134,19 @@ class CarState():
     self.right_blinker_on = pt_cp.vl["BLINK_INFO"]['RIGHT_BLINK'] == 1
     self.blinker_on = self.left_blinker_on or self.right_blinker_on
 
-    self.acc_active = pt_cp.vl["CRZ_CTRL"]['CRZ_ACTIVE']
+    # if any of the cruize buttons is pressed force state update
+    if any([pt_cp.vl["CRZ_BTNS"]['RES'],
+            pt_cp.vl["CRZ_BTNS"]['SET_P'],
+            pt_cp.vl["CRZ_BTNS"]['SET_M']]):
+      self.acc_active = True
+      self.v_cruise_pcm =  self.v_ego_raw
+
     self.main_on = pt_cp.vl["CRZ_CTRL"]['CRZ_ACTIVE']
+    if not self.main_on:
+      self.acc_active = False
 
     if self.acc_active != self.acc_active_last:
-      self.v_cruise_pcm =  v_wheel // CV.KPH_TO_MS
+      self.v_cruise_pcm =  self.speed_kph
       self.acc_active_last = self.acc_active
 
     self.steer_torque_driver = pt_cp.vl["STEER_TORQUE"]['STEER_TORQUE_SENSOR']
@@ -139,7 +154,7 @@ class CarState():
 
     # Mazde doesn't steer if hands are off the steering wheel over 5 seconds
     # One way to deal with this is to use a weight on the steering wheel, which
-    # generates about 10 units of torque. this "artificial" torque should be
+    # generates about 8 units of torque. this "artificial" torque should be
     # ignored by OP. The value could be lower but 15 seems to be a good compromise.
     self.steer_override = abs(self.steer_torque_driver) > 15
 
@@ -170,8 +185,18 @@ class CarState():
     # On if no driver torque the last 5 seconds
     self.steer_lkas.handsoff = pt_cp.vl["STEER_RATE"]['HANDS_OFF_5_SECONDS']
 
+    # LKAS is enabled at 50kph going up and disabled at 45kph going down
+    if self.speed_kph > 50 and self.low_speed_lockout:
+      self.low_speed_lockout = False
+    elif self.speed_kph < 45 and not self.low_speed_lockout:
+      self.low_speed_lockout = True
+
+    if (self.low_speed_lockout or self.steer_lkas.block) and self.speed_kph < 50:
+        if not self.lkas_speed_lock:
+          self.lkas_speed_lock = True
+    elif self.lkas_speed_lock:
+      self.lkas_speed_lock = False
+
     #self.steer_not_allowed = self.steer_lkas.block == 1
-    # no steer below 50kph
-    self.low_speed_lockout = ((v_wheel // CV.KPH_TO_MS)) < 50 and (self.steer_lkas.block == 1)
 
     self.cam_lkas = cam_cp.vl["CAM_LKAS"]

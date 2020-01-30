@@ -3,9 +3,9 @@ from cereal import car
 from selfdrive.config import Conversions as CV
 from selfdrive.controls.lib.drive_helpers import create_event, EventTypes as ET
 from selfdrive.controls.lib.vehicle_model import VehicleModel
-from selfdrive.car.mazda.values import CAR
+from selfdrive.car.mazda.values import CAR,  FINGERPRINTS, ECU_FINGERPRINT, ECU
 from selfdrive.car.mazda.carstate import CarState, get_powertrain_can_parser, get_cam_can_parser
-from selfdrive.car import STD_CARGO_KG, scale_rot_inertia, scale_tire_stiffness, gen_empty_fingerprint
+from selfdrive.car import STD_CARGO_KG, scale_rot_inertia, scale_tire_stiffness, gen_empty_fingerprint, is_ecu_disconnected
 from selfdrive.car.interfaces import CarInterfaceBase
 
 class CanBus():
@@ -19,15 +19,16 @@ ButtonType = car.CarState.ButtonEvent.Type
 class CarInterface(CarInterfaceBase):
   def __init__(self, CP, CarController):
     self.CP = CP
+    self.VM = VehicleModel(CP)
 
     self.frame = 0
     self.acc_active_prev = 0
     self.gas_pressed_prev = False
+    self.low_speed_alert = False
 
     # *** init the major players ***
     canbus = CanBus()
     self.CS = CarState(CP, canbus)
-    self.VM = VehicleModel(CP)
     self.pt_cp = get_powertrain_can_parser(CP, canbus)
     self.cam_cp = get_cam_can_parser(CP, canbus)
 
@@ -53,9 +54,7 @@ class CarInterface(CarInterfaceBase):
 
     ret.enableCruise = True
 
-    # force openpilot to fake the stock camera, since car harness is not supported yet and old style
-    # giraffe (with switches) was never released
-    ret.enableCamera = True
+    ret.enableCamera = is_ecu_disconnected(fingerprint[0], FINGERPRINTS, ECU_FINGERPRINT, candidate, ECU.CAM) or has_relay
 
     tire_stiffness_factor = 0.70   # not optimized yet
 
@@ -66,7 +65,7 @@ class CarInterface(CarInterfaceBase):
       ret.steerRatio = 15.5
 
       ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kpBP = [[0.], [0.]]
-      ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.2], [0.16]]
+      ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.2], [0.2]]
 
       ret.lateralTuning.pid.kf = 0.00006
 
@@ -98,9 +97,10 @@ class CarInterface(CarInterfaceBase):
     ret.stoppingControl = False
     ret.startAccel = 0.0
 
-    ret.minEnableSpeed = -1
+    ret.minEnableSpeed = -1.   # enable is done by stock ACC, so ignore this
 
-    # end from gm
+    # no steer below 45kph
+    ret.minSteerSpeed = 45 * CV.KPH_TO_MS
 
     # TODO: get actual value, for now starting with reasonable value for
     # civic and scaling by mass and wheelbase
@@ -171,9 +171,14 @@ class CarInterface(CarInterfaceBase):
 
     # cruise state
     ret.cruiseState.enabled = bool(self.CS.acc_active)
-    ret.cruiseState.speedOffset = 0.
+    if self.CS.acc_active:
+      ret.cruiseState.speed = self.CS.v_cruise_pcm
+    else:
+      ret.cruiseState.speed = 0
 
     ret.cruiseState.available = bool(self.CS.main_on)
+    ret.cruiseState.standstill = False
+
     ret.leftBlinker = bool(self.CS.left_blinker_on)
     ret.rightBlinker = bool(self.CS.right_blinker_on)
 
@@ -182,6 +187,10 @@ class CarInterface(CarInterfaceBase):
 
     ret.gasPressed = self.CS.user_gas_pressed
 
+    if self.CS.acc_active and self.CS.lkas_speed_lock:
+      self.low_speed_alert = True
+    else:
+      self.low_speed_alert = False
 
     events = []
     if self.CS.acc_active and not self.acc_active_prev:
@@ -197,9 +206,17 @@ class CarInterface(CarInterfaceBase):
     if self.CS.low_speed_lockout:
       events.append(create_event('speedTooLow', [ET.NO_ENTRY]))
 
+
+    if self.low_speed_alert:
+      events.append(create_event('belowSteerSpeed', [ET.WARNING]))
+
+    if self.CS.steer_lkas.handsoff:
+      events.append(create_event('steerTempUnavailable', [ET.NO_ENTRY, ET.WARNING]))
+
     # disable on gas pedal rising edge
     if (ret.gasPressed and not self.gas_pressed_prev):
       events.append(create_event('pedalPressed', [ET.NO_ENTRY, ET.USER_DISABLE]))
+      self.CS.acc_active = False
 
     # handle button presses
     for b in ret.buttonEvents:
