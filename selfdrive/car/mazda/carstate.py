@@ -101,6 +101,8 @@ class CarState():
     self.speed_kph = 0
     self.lkas_speed_lock = False
     self.low_speed_lockout = True
+    self.low_speed_lockout_last = True
+    self.acc_press_update = False
 
     # vEgo kalman filter
     dt = 0.01
@@ -169,18 +171,22 @@ class CarState():
     elif self.speed_kph < LKAS_LIMITS.DISABLE_SPEED and not self.low_speed_lockout:
       self.low_speed_lockout = True
 
-    if (self.low_speed_lockout or self.steer_lkas.block) and self.speed_kph < LKAS_LIMITS.ENABLE_SPEED:
+    if (self.low_speed_lockout or self.steer_lkas.block) and self.speed_kph < LKAS_LIMITS.DISABLE_SPEED:
         if not self.lkas_speed_lock:
           self.lkas_speed_lock = True
     elif self.lkas_speed_lock:
       self.lkas_speed_lock = False
 
     # if any of the cruize buttons is pressed force state update
-    if not self.low_speed_lockout and any([pt_cp.vl["CRZ_BTNS"]['RES'],
-                                           pt_cp.vl["CRZ_BTNS"]['SET_P'],
-                                           pt_cp.vl["CRZ_BTNS"]['SET_M']]):
+    if any([pt_cp.vl["CRZ_BTNS"]['RES'],
+                pt_cp.vl["CRZ_BTNS"]['SET_P'],
+                pt_cp.vl["CRZ_BTNS"]['SET_M']]):
       self.acc_active = True
       self.v_cruise_pcm =  self.v_ego_raw
+      if self.low_speed_lockout_last:
+        self.acc_press_update = True
+    elif self.acc_press_update:
+      self.acc_press_update = False
 
     self.main_on = pt_cp.vl["CRZ_CTRL"]['CRZ_ACTIVE']
     if not self.main_on:
@@ -192,6 +198,8 @@ class CarState():
 
     self.steer_error = False
     self.brake_error = False
+
+    self.low_speed_lockout_last = self.low_speed_lockout
 
     #self.steer_not_allowed = self.steer_lkas.block == 1
 

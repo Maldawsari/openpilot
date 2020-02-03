@@ -193,7 +193,7 @@ class CarInterface(CarInterfaceBase):
       self.low_speed_alert = False
 
     events = []
-    if self.CS.acc_active and not self.acc_active_prev:
+    if self.CS.acc_active and (not self.acc_active_prev or self.CS.acc_press_update):
       events.append(create_event('pcmEnable', [ET.ENABLE]))
     if not self.CS.acc_active:
       events.append(create_event('pcmDisable', [ET.USER_DISABLE]))
@@ -205,7 +205,8 @@ class CarInterface(CarInterfaceBase):
 
     if self.CS.low_speed_lockout:
       events.append(create_event('speedTooLow', [ET.NO_ENTRY]))
-
+      if self.CS.acc_active and not self.acc_active_prev:
+        self.CS.acc_active = False
 
     if self.low_speed_alert:
       events.append(create_event('belowSteerSpeed', [ET.WARNING]))
