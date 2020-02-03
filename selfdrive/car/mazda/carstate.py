@@ -2,7 +2,7 @@
 from common.kalman.simple_kalman import KF1D
 from selfdrive.config import Conversions as CV
 from opendbc.can.parser import CANParser
-from selfdrive.car.mazda.values import DBC
+from selfdrive.car.mazda.values import DBC, LKAS_LIMITS
 
 def get_powertrain_can_parser(CP, canbus):
   # this function generates lists for signal, messages and initial values
@@ -134,29 +134,10 @@ class CarState():
     self.right_blinker_on = pt_cp.vl["BLINK_INFO"]['RIGHT_BLINK'] == 1
     self.blinker_on = self.left_blinker_on or self.right_blinker_on
 
-    # if any of the cruize buttons is pressed force state update
-    if any([pt_cp.vl["CRZ_BTNS"]['RES'],
-            pt_cp.vl["CRZ_BTNS"]['SET_P'],
-            pt_cp.vl["CRZ_BTNS"]['SET_M']]):
-      self.acc_active = True
-      self.v_cruise_pcm =  self.v_ego_raw
-
-    self.main_on = pt_cp.vl["CRZ_CTRL"]['CRZ_ACTIVE']
-    if not self.main_on:
-      self.acc_active = False
-
-    if self.acc_active != self.acc_active_last:
-      self.v_cruise_pcm =  self.speed_kph
-      self.acc_active_last = self.acc_active
-
     self.steer_torque_driver = pt_cp.vl["STEER_TORQUE"]['STEER_TORQUE_SENSOR']
     self.steer_torque_motor = pt_cp.vl["STEER_TORQUE"]['STEER_TORQUE_MOTOR']
 
-    # Mazde doesn't steer if hands are off the steering wheel over 5 seconds
-    # One way to deal with this is to use a weight on the steering wheel, which
-    # generates about 8 units of torque. this "artificial" torque should be
-    # ignored by OP. The value could be lower but 15 seems to be a good compromise.
-    self.steer_override = abs(self.steer_torque_driver) > 15
+    self.steer_override = abs(self.steer_torque_driver) > LKAS_LIMITS.STEER_THRESHOLD
 
     self.angle_steers = pt_cp.vl["STEER"]['STEER_ANGLE']
     self.angle_steers_rate = pt_cp.vl["STEER_RATE"]['STEER_ANGLE_RATE']
@@ -175,9 +156,6 @@ class CarState():
 
     self.user_gas_pressed = True if pt_cp.vl["ENGINE_DATA"]['PEDAL_GAS'] > 0.0001 else False
 
-    self.steer_error = False
-    self.brake_error = False
-
     # No steer if block signal is on
     self.steer_lkas.block = pt_cp.vl["STEER_RATE"]['LKAS_BLOCK']
     # track driver torque, on if torque is not detected
@@ -186,16 +164,34 @@ class CarState():
     self.steer_lkas.handsoff = pt_cp.vl["STEER_RATE"]['HANDS_OFF_5_SECONDS']
 
     # LKAS is enabled at 50kph going up and disabled at 45kph going down
-    if self.speed_kph > 50 and self.low_speed_lockout:
+    if self.speed_kph > LKAS_LIMITS.ENABLE_SPEED and self.low_speed_lockout:
       self.low_speed_lockout = False
-    elif self.speed_kph < 45 and not self.low_speed_lockout:
+    elif self.speed_kph < LKAS_LIMITS.DISABLE_SPEED and not self.low_speed_lockout:
       self.low_speed_lockout = True
 
-    if (self.low_speed_lockout or self.steer_lkas.block) and self.speed_kph < 50:
+    if (self.low_speed_lockout or self.steer_lkas.block) and self.speed_kph < LKAS_LIMITS.ENABLE_SPEED:
         if not self.lkas_speed_lock:
           self.lkas_speed_lock = True
     elif self.lkas_speed_lock:
       self.lkas_speed_lock = False
+
+    # if any of the cruize buttons is pressed force state update
+    if not self.low_speed_lockout and any([pt_cp.vl["CRZ_BTNS"]['RES'],
+                                           pt_cp.vl["CRZ_BTNS"]['SET_P'],
+                                           pt_cp.vl["CRZ_BTNS"]['SET_M']]):
+      self.acc_active = True
+      self.v_cruise_pcm =  self.v_ego_raw
+
+    self.main_on = pt_cp.vl["CRZ_CTRL"]['CRZ_ACTIVE']
+    if not self.main_on:
+      self.acc_active = False
+
+    if self.acc_active != self.acc_active_last:
+      self.v_cruise_pcm =  self.speed_kph
+      self.acc_active_last = self.acc_active
+
+    self.steer_error = False
+    self.brake_error = False
 
     #self.steer_not_allowed = self.steer_lkas.block == 1
 
