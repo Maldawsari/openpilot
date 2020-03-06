@@ -18,7 +18,7 @@ def create_steering_control(packer, bus, car_fingerprint, ctr, apply_steer, lkas
   b1 = int(lkas["BIT_1"])
   b2 = int(lkas[ "BIT_2"])
   ldw = int(lkas["LDW"])
-  lnv = int(lkas["LINE_NOT_VISIBLE"])
+  lnv = 0 #int(lkas["LINE_NOT_VISIBLE"])
 
   csum = 241 - ctr - (hi - 8) - lo - (lnv << 3) - (b1 << 5)  - (b2 << 1) - (ldw << 7)
 
